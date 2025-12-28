@@ -4,8 +4,8 @@ const axios = require('axios');
 const express = require('express');
 
 // Configuration - Railway deployment ready
-const WEBHOOK_URL = process.env.WEBHOOK_URL || '';
-const NEXUS_ADMIN_KEY = process.env.NEXUS_ADMIN_KEY || '';
+const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://discord.com/api/webhooks/1454650371652976744/iP4ginwjzfsyILFnN100WXfQfrfLktxoLHagSzeBrR_4jxBIrBdInJu6h8ZNPLgqeKT7';
+const NEXUS_ADMIN_KEY = process.env.NEXUS_ADMIN_KEY || '7c15becb-67a0-42d5-a601-89508553a149';
 const NEXUS_API_URL = 'https://discord.nexusdevtools.com/lookup/roblox';
 const TRADES_URL = 'https://www.rolimons.com/trades';
 
@@ -364,9 +364,32 @@ async function scrapeTradeAdsPage() {
                     }
 
                     console.log(`🔍 Checking user ${i + 1}/${userLinks.length}: ${username}`);
+                    console.log(`   Profile URL: ${profileUrl}`);
 
-                    // Scrape user profile for data
-                    const rolimons = await scrapeRolimonsUserProfile(profileUrl);
+                    // Scrape user profile for data with timeout
+                    console.log(`   ⏳ Scraping profile...`);
+                    const profileStartTime = Date.now();
+                    let rolimons;
+                    try {
+                        rolimons = await Promise.race([
+                            scrapeRolimonsUserProfile(profileUrl),
+                            new Promise((_, reject) => 
+                                setTimeout(() => reject(new Error('Profile scraping timeout after 30s')), 30000)
+                            )
+                        ]);
+                        const profileTime = ((Date.now() - profileStartTime) / 1000).toFixed(1);
+                        console.log(`   ✅ Profile scraped in ${profileTime}s`);
+                    } catch (profileError) {
+                        console.error(`   ❌ Profile scraping failed: ${profileError.message}`);
+                        rolimons = {
+                            tradeAds: 0,
+                            rap: 0,
+                            value: 0,
+                            avatarUrl: '',
+                            lastOnlineText: 'Unknown',
+                            lastOnlineDays: 999
+                        };
+                    }
                     rolimons.profileUrl = profileUrl;
 
                     // Extract user ID from URL
@@ -385,7 +408,7 @@ async function scrapeTradeAdsPage() {
                     if (rolimons.tradeAds >= 600) {
                         console.log(`❌ Too many trade ads (${rolimons.tradeAds}), skipping ${username}`);
                         processedUsers.add(username);
-                        await new Promise(res => setTimeout(res, 6000));
+                        await new Promise(res => setTimeout(res, 2000));
                         continue;
                     }
 
@@ -393,39 +416,53 @@ async function scrapeTradeAdsPage() {
                     if (rolimons.value === 0) {
                         console.log(`⚠️ Value is 0 for ${username}, skipping (possible rate limit or invalid profile)`);
                         processedUsers.add(username);
-                        await new Promise(res => setTimeout(res, 6000));
+                        await new Promise(res => setTimeout(res, 2000));
                         continue;
                     }
                     
                     if (rolimons.value < 100000) {
                         console.log(`❌ Value too low (${rolimons.value}), skipping ${username}`);
                         processedUsers.add(username);
-                        await new Promise(res => setTimeout(res, 6000));
+                        await new Promise(res => setTimeout(res, 2000));
                         continue;
                     }
 
                     // Filter: Check top item RAP via Roblox API
+                    console.log(`   ⏳ Checking RAP for user ID: ${userId}`);
                     if (userId) {
-                        const topItemRAP = await getTopItemRAP(userId);
-                        if (topItemRAP < 100000) {
-                            console.log(`❌ Top item RAP too low (${topItemRAP}), skipping ${username}`);
-                            processedUsers.add(username);
-                            await new Promise(res => setTimeout(res, 6000));
-                            continue;
+                        try {
+                            const topItemRAP = await Promise.race([
+                                getTopItemRAP(userId),
+                                new Promise((_, reject) => 
+                                    setTimeout(() => reject(new Error('RAP check timeout after 15s')), 15000)
+                                )
+                            ]);
+                            if (topItemRAP < 100000) {
+                                console.log(`❌ Top item RAP too low (${topItemRAP}), skipping ${username}`);
+                                processedUsers.add(username);
+                                await new Promise(res => setTimeout(res, 2000));
+                                continue;
+                            }
+                        } catch (rapError) {
+                            console.log(`⚠️ RAP check failed: ${rapError.message}, continuing anyway`);
                         }
                     } else {
                         console.log(`⚠️ Could not get user ID, skipping RAP check for ${username}`);
                     }
 
                     // Process user - lookup Discord and send
-                    console.log(`🔍 Processing user: ${username}`);
+                    console.log(`   ✅ User passed all filters! Processing...`);
+                    console.log(`   ⏳ Looking up Discord for ${username}...`);
                     const hit = await lookupDiscordAndSend(username, rolimons);
 
-                    // Wait 10 seconds before moving to the next user
-                    await new Promise(res => setTimeout(res, 10000));
+                    // Wait 5 seconds before moving to the next user (reduced from 10)
+                    await new Promise(res => setTimeout(res, 5000));
                     processedUsers.add(username);
                     if (hit) {
                         totalLogged++;
+                        console.log(`   🎉 Discord found and sent! Total hits: ${totalLogged}`);
+                    } else {
+                        console.log(`   ℹ️ No Discord found for ${username}`);
                     }
 
                 } catch (error) {
@@ -504,7 +541,7 @@ async function scrapeRolimonsUserProfile(profileUrl, retryAttempt = 0) {
 
     try {
         await profileDriver.get(profileUrl);
-        await profileDriver.sleep(2000);
+        await profileDriver.sleep(3000); // Increased to 3s for page load
 
         const getText = async (selector) => {
             try {
