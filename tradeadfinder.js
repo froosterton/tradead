@@ -4,17 +4,11 @@ const axios = require('axios');
 const express = require('express');
 
 // Configuration - Railway deployment ready
-const WEBHOOK_URL = process.env.WEBHOOK_URL || '';
-const NEXUS_ADMIN_KEY = process.env.NEXUS_ADMIN_KEY || '';
+const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://discord.com/api/webhooks/1454650371652976744/iP4ginwjzfsyILFnN100WXfQfrfLktxoLHagSzeBrR_4jxBIrBdInJu6h8ZNPLgqeKT7';
+const NEXUS_ADMIN_KEY = process.env.NEXUS_ADMIN_KEY || '7c15becb-67a0-42d5-a601-89508553a149';
 const NEXUS_API_URL = 'https://discord.nexusdevtools.com/lookup/roblox';
 const TRADES_URL = 'https://www.rolimons.com/trades';
 
-// IPRoyal Proxy Configuration
-const PROXY_HOST = process.env.PROXY_HOST || 'geo.iproyal.com';
-const PROXY_PORT = process.env.PROXY_PORT || '12321';
-const PROXY_USERNAME = process.env.PROXY_USERNAME || '';
-const PROXY_PASSWORD = process.env.PROXY_PASSWORD || '';
-const USE_PROXY = PROXY_USERNAME && PROXY_PASSWORD;
 
 // Express server for healthcheck
 const app = express();
@@ -27,7 +21,6 @@ let totalLogged = 0;
 let isScraping = false;
 let retryCount = 0;
 const MAX_RETRIES = 3;
-let proxyRotationCount = 0; // Track proxy rotations
 
 // Healthcheck endpoint
 app.get('/', (req, res) => {
@@ -58,22 +51,9 @@ async function startScraper() {
     // This code will never execute as scrapeTradeAdsPage() runs in an infinite loop
 }
 
-function buildProxyString() {
-    if (!USE_PROXY) return null;
-    return `http://${PROXY_USERNAME}:${PROXY_PASSWORD}@${PROXY_HOST}:${PROXY_PORT}`;
-}
-
 async function initializeWebDriver() {
     try {
         console.log('🔧 Initializing Selenium WebDriver...');
-        
-        const proxyString = buildProxyString();
-        if (USE_PROXY) {
-            console.log(`🌐 Using IPRoyal proxy: ${PROXY_HOST}:${PROXY_PORT}`);
-            console.log(`   Username: ${PROXY_USERNAME.substring(0, 5)}...`);
-        } else {
-            console.log('⚠️ No proxy configured - running without proxy');
-        }
 
         const options = new chrome.Options();
         options.addArguments('--headless');
@@ -89,19 +69,13 @@ async function initializeWebDriver() {
         options.addArguments('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
         options.addArguments('--disable-blink-features=AutomationControlled');
         options.addArguments('--exclude-switches=enable-automation');
-        options.setExcludeSwitches(['enable-automation']);
-        options.addArguments('--disable-dev-shm-usage');
-        
-        if (proxyString) {
-            options.addArguments(`--proxy-server=${proxyString}`);
-        }
 
         driver = await new Builder()
             .forBrowser('chrome')
             .setChromeOptions(options)
             .build();
 
-        // Initialize profile driver with same proxy settings
+        // Initialize profile driver
         const profileOptions = new chrome.Options();
         profileOptions.addArguments('--headless');
         profileOptions.addArguments('--no-sandbox');
@@ -116,12 +90,6 @@ async function initializeWebDriver() {
         profileOptions.addArguments('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
         profileOptions.addArguments('--disable-blink-features=AutomationControlled');
         profileOptions.addArguments('--exclude-switches=enable-automation');
-        profileOptions.setExcludeSwitches(['enable-automation']);
-        profileOptions.addArguments('--disable-dev-shm-usage');
-        
-        if (proxyString) {
-            profileOptions.addArguments(`--proxy-server=${proxyString}`);
-        }
 
         profileDriver = await new Builder()
             .forBrowser('chrome')
@@ -132,51 +100,6 @@ async function initializeWebDriver() {
         return true;
     } catch (error) {
         console.error('❌ WebDriver initialization error:', error.message);
-        return false;
-    }
-}
-
-async function rotateProxy() {
-    if (!USE_PROXY) {
-        console.log('⚠️ Proxy rotation requested but no proxy configured');
-        return false;
-    }
-    
-    proxyRotationCount++;
-    console.log(`🔄 Rotating proxy (rotation #${proxyRotationCount})...`);
-    
-    try {
-        // Close existing drivers
-        if (driver) {
-            try {
-                await driver.quit();
-            } catch (e) {
-                console.log('Error closing main driver:', e.message);
-            }
-        }
-        
-        if (profileDriver) {
-            try {
-                await profileDriver.quit();
-            } catch (e) {
-                console.log('Error closing profile driver:', e.message);
-            }
-        }
-        
-        // Wait a bit before reinitializing (IPRoyal rotates on new connection)
-        await new Promise(res => setTimeout(res, 5000));
-        
-        // Reinitialize with new proxy connection
-        const initialized = await initializeWebDriver();
-        if (initialized) {
-            console.log('✅ Proxy rotated successfully');
-            return true;
-        } else {
-            console.log('❌ Failed to reinitialize after proxy rotation');
-            return false;
-        }
-    } catch (error) {
-        console.error('❌ Error during proxy rotation:', error.message);
         return false;
     }
 }
@@ -467,18 +390,10 @@ async function scrapeTradeAdsPage() {
                     }
 
                     // Filter: Skip if value < 100,000
-                    // Also detect rate limit: value = 0 usually means rate limited
                     if (rolimons.value === 0) {
-                        console.log(`⚠️ Rate limit detected (value = 0) for ${username}, rotating proxy...`);
+                        console.log(`⚠️ Value is 0 for ${username}, skipping (possible rate limit or invalid profile)`);
                         processedUsers.add(username);
-                        const rotated = await rotateProxy();
-                        if (!rotated) {
-                            console.log('❌ Proxy rotation failed, waiting 30 seconds before retry...');
-                            await new Promise(res => setTimeout(res, 30000));
-                        } else {
-                            console.log('✅ Proxy rotated, continuing...');
-                            await new Promise(res => setTimeout(res, 10000));
-                        }
+                        await new Promise(res => setTimeout(res, 6000));
                         continue;
                     }
                     
