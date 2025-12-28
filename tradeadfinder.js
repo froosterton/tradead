@@ -86,7 +86,11 @@ async function initializeWebDriver() {
         options.addArguments('--disable-extensions');
         options.addArguments('--disable-plugins');
         options.addArguments('--disable-images');
-        options.addArguments('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+        options.addArguments('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+        options.addArguments('--disable-blink-features=AutomationControlled');
+        options.addArguments('--exclude-switches=enable-automation');
+        options.setExcludeSwitches(['enable-automation']);
+        options.addArguments('--disable-dev-shm-usage');
         
         if (proxyString) {
             options.addArguments(`--proxy-server=${proxyString}`);
@@ -109,7 +113,11 @@ async function initializeWebDriver() {
         profileOptions.addArguments('--disable-extensions');
         profileOptions.addArguments('--disable-plugins');
         profileOptions.addArguments('--disable-images');
-        profileOptions.addArguments('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+        profileOptions.addArguments('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+        profileOptions.addArguments('--disable-blink-features=AutomationControlled');
+        profileOptions.addArguments('--exclude-switches=enable-automation');
+        profileOptions.setExcludeSwitches(['enable-automation']);
+        profileOptions.addArguments('--disable-dev-shm-usage');
         
         if (proxyString) {
             profileOptions.addArguments(`--proxy-server=${proxyString}`);
@@ -182,22 +190,78 @@ async function scrapeTradeAdsPage() {
             
             // Navigate to the trades page
             await driver.get(TRADES_URL);
-            await driver.sleep(5000);
-
-            // Wait for trade ads to load
+            
+            // Wait for page to fully load
+            console.log('⏳ Waiting for page to load...');
+            await driver.sleep(8000);
+            
+            // Check page title and URL to verify we're on the right page
             try {
-                console.log('⏳ Waiting for trade ads to load...');
-                await driver.wait(until.elementLocated(By.css('a.ad_creator_name[href*="/player/"]')), 15000);
+                const pageTitle = await driver.getTitle();
+                const currentUrl = await driver.getCurrentUrl();
+                console.log(`📄 Page Title: ${pageTitle}`);
+                console.log(`🔗 Current URL: ${currentUrl}`);
+            } catch (e) {
+                console.log('⚠️ Could not get page info:', e.message);
+            }
+            
+            // Check page source length to see if content loaded
+            try {
+                const pageSource = await driver.getPageSource();
+                console.log(`📊 Page source length: ${pageSource.length} characters`);
+                if (pageSource.length < 1000) {
+                    console.log('⚠️ Page source seems too short, might not have loaded properly');
+                }
+            } catch (e) {
+                console.log('⚠️ Could not get page source:', e.message);
+            }
+
+            // Wait for trade ads to load with longer timeout
+            try {
+                console.log('⏳ Waiting for trade ads to load (30s timeout)...');
+                await driver.wait(until.elementLocated(By.css('a.ad_creator_name[href*="/player/"]')), 30000);
                 console.log('✅ Trade ads loaded');
             } catch (e) {
                 console.log('⚠️ Could not find trade ad creator links:', e.message);
+                
+                // Try alternative selectors
+                console.log('🔍 Trying alternative selectors...');
+                const alternativeSelectors = [
+                    'a[href*="/player/"]',
+                    '.ad_creator_name',
+                    'a.ad_creator_name',
+                    '[href*="/player/"]'
+                ];
+                
+                let foundElements = false;
+                for (const selector of alternativeSelectors) {
+                    try {
+                        const elements = await driver.findElements(By.css(selector));
+                        if (elements.length > 0) {
+                            console.log(`✅ Found ${elements.length} elements with selector: ${selector}`);
+                            foundElements = true;
+                            break;
+                        }
+                    } catch (err) {
+                        continue;
+                    }
+                }
+                
+                if (!foundElements) {
+                    console.log('❌ No user links found with any selector. Page might be blocked or structure changed.');
+                    console.log('⏳ Waiting 30 seconds before retry...');
+                    await new Promise(res => setTimeout(res, 30000));
+                    continue;
+                }
             }
 
             let totalPages = 1;
             
             try {
-                // Find pagination container - look for pagination controls
-                await driver.wait(until.elementLocated(By.css('.pagination, .page-link, [data-dt-idx]')), 10000);
+                // Find pagination container - look for pagination controls with longer timeout
+                console.log('⏳ Looking for pagination (20s timeout)...');
+                await driver.wait(until.elementLocated(By.css('.pagination, .page-link, [data-dt-idx]')), 20000);
+                console.log('✅ Pagination found');
 
                 // Try to find pagination buttons
                 const pageButtons = await driver.findElements(By.css('a.page-link[data-dt-idx], .pagination a'));
@@ -234,6 +298,7 @@ async function scrapeTradeAdsPage() {
                 }
             } catch (e) {
                 console.log('⚠️ Error finding pagination:', e.message);
+                console.log('ℹ️ Assuming single page or pagination not available');
             }
 
             console.log(`🔄 Starting continuous scraping from page ${totalPages} (last page) going backwards...`);
@@ -291,11 +356,36 @@ async function scrapeTradeAdsPage() {
             // Find all user links on the current page
             let userLinks = [];
             try {
-                await driver.wait(until.elementLocated(By.css('a.ad_creator_name[href*="/player/"]')), 15000);
+                console.log(`⏳ Looking for user links on page ${page} (30s timeout)...`);
+                await driver.wait(until.elementLocated(By.css('a.ad_creator_name[href*="/player/"]')), 30000);
                 userLinks = await driver.findElements(By.css('a.ad_creator_name[href*="/player/"]'));
                 console.log(`✅ Found ${userLinks.length} user links on page ${page}`);
+                
+                // If no links found, try alternative selectors
+                if (userLinks.length === 0) {
+                    console.log('🔍 No links found with primary selector, trying alternatives...');
+                    const altSelectors = [
+                        'a[href*="/player/"]',
+                        '.ad_creator_name',
+                        'a.ad_creator_name'
+                    ];
+                    
+                    for (const selector of altSelectors) {
+                        try {
+                            userLinks = await driver.findElements(By.css(selector));
+                            if (userLinks.length > 0) {
+                                console.log(`✅ Found ${userLinks.length} links with alternative selector: ${selector}`);
+                                break;
+                            }
+                        } catch (err) {
+                            continue;
+                        }
+                    }
+                }
             } catch (e) {
                 console.log(`❌ Could not find user links: ${e.message}`);
+                console.log('⏳ Waiting 10 seconds before continuing...');
+                await new Promise(res => setTimeout(res, 10000));
                 continue;
             }
             
