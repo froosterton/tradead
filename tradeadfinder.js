@@ -4,8 +4,8 @@ const axios = require('axios');
 const express = require('express');
 
 // Configuration - Railway deployment ready
-const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://discord.com/api/webhooks/1454650371652976744/iP4ginwjzfsyILFnN100WXfQfrfLktxoLHagSzeBrR_4jxBIrBdInJu6h8ZNPLgqeKT7';
-const NEXUS_ADMIN_KEY = process.env.NEXUS_ADMIN_KEY || '7c15becb-67a0-42d5-a601-89508553a149';
+const WEBHOOK_URL = process.env.WEBHOOK_URL || '';
+const NEXUS_ADMIN_KEY = process.env.NEXUS_ADMIN_KEY || '';
 const NEXUS_API_URL = 'https://discord.nexusdevtools.com/lookup/roblox';
 const TRADES_URL = 'https://www.rolimons.com/trades';
 
